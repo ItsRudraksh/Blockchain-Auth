@@ -1,4 +1,4 @@
-const express = require("express");
+/* const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { Web3 } = require("web3");
@@ -130,7 +130,7 @@ app.get("/verify-token", verifyJWT, verifyOnBlockchain, (req, res) => {
 });
 
 // Cron job to remove expired tokens every 5 minutes
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("/5 * * * *", async () => {
   console.log("Running cron job to remove expired tokens...");
   const currentTime = Math.floor(Date.now() / 1000);
 
@@ -159,4 +159,121 @@ cron.schedule("*/5 * * * *", async () => {
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+});
+ */
+
+const express = require("express");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const axios = require("axios");
+const cors = require("cors");
+const cookieParser = require("cookie-parser");
+const dotenv = require("dotenv");
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+const secret = process.env.SECRET;
+const blockchainServiceUrl = process.env.BLOCKCHAIN_SERVICE_URL; // Blockchain microservice URL
+
+app.use(cors({ credentials: true }));
+app.use(express.json());
+app.use(cookieParser());
+
+// Mock database
+const users = {};
+
+// Middleware to issue token
+const issueToken = async (req, res, next) => {
+  try {
+    const { username } = req.body;
+
+    const token = jwt.sign({ username }, secret, { expiresIn: "5m" }); // 5 minutes
+    const expiryTime = Math.floor(Date.now() / 1000) + 300;
+
+    // Call blockchain microservice to register token
+    await axios.post(`${blockchainServiceUrl}/register-token`, {
+      token,
+      expiryTime,
+    });
+
+    res.cookie("token", token, { httpOnly: true, maxAge: 300000 });
+    next();
+  } catch (error) {
+    console.error("Error issuing token:", error);
+    res.status(500).send("Failed to issue token");
+  }
+};
+
+// Middleware to verify token
+const verifyToken = async (req, res, next) => {
+  try {
+    const token = req.cookies?.token;
+    if (!token) return res.status(401).send("No token provided");
+
+    const response = await axios.post(
+      `${blockchainServiceUrl}/validate-token`,
+      {
+        token,
+      }
+    );
+
+    if (!response.data.valid) {
+      return res.status(401).send("Token is invalid or expired");
+    }
+
+    next();
+  } catch (error) {
+    console.error("Error verifying token:", error);
+    res.status(500).send("Token verification failed");
+  }
+};
+
+// Sign-up endpoint
+app.post(
+  "/signup",
+  async (req, res, next) => {
+    const { username, password } = req.body;
+
+    if (users[username]) {
+      return res.status(400).send("User already exists");
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    users[username] = { password: hashedPassword };
+    req.body.username = username;
+    next();
+  },
+  issueToken,
+  (req, res) => {
+    res.send("User registered and logged in successfully");
+  }
+);
+
+// Login endpoint
+app.post(
+  "/login",
+  async (req, res, next) => {
+    const { username, password } = req.body;
+
+    const user = users[username];
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).send("Invalid credentials");
+    }
+
+    next();
+  },
+  verifyToken,
+  (req, res) => {
+    res.send("Login successful");
+  }
+);
+
+app.get("/verify-token", verifyToken, (req, res) => {
+  res.send("Token is valid");
+});
+
+app.listen(PORT, () => {
+  console.log(`Main app running on http://localhost:${PORT}`);
 });

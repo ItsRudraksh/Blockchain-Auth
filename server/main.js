@@ -22,7 +22,7 @@ const SECRET = process.env.SECRET;
 // Blockchain setup
 const web3 = new Web3("http://127.0.0.1:8545");
 const contractABI =
-  require("./artifacts/contracts/Auth.sol/TokenRegistry.json").abi;
+  require("../artifacts/contracts/Auth.sol/TokenRegistry.json").abi;
 const contractAddress = process.env.CONTRACT_ADDRESS;
 const contract = new web3.eth.Contract(contractABI, contractAddress);
 

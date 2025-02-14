@@ -90,3 +90,5 @@ artifacts
 *.sublime-color-scheme
 *.sublime-syntax
 *.sublime-build
+.qodo
+*.txt

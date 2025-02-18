@@ -4,11 +4,19 @@ const jwt = require("jsonwebtoken");
 const { ethers } = require("ethers");
 const cookieParser = require("cookie-parser");
 const dotenv = require("dotenv");
+const mongoose = require("mongoose");
+
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
+
+// MongoDB Connection
+mongoose.connect("mongodb://localhost:27017/authDB").then(() => {
+  console.log("Connected to db");
+})
+const User = mongoose.model("User", new mongoose.Schema({ username: String, password: String }));
 
 // Global timing middleware
 app.use((req, res, next) => {
@@ -27,24 +35,20 @@ const contractABI = require("./TokenRegistry.json").abi;
 const contractAddress = process.env.CONTRACT_ADDRESS;
 const contract = new ethers.Contract(contractAddress, contractABI, wallet);
 
-// Mock database for user management
-const users = {};
-
 // Response formatter middleware
 const formatResponse = (req, res, next) => {
   const oldJson = res.json;
   res.json = function (data) {
     const processingTime = Date.now() - req.startTime;
-
     const formattedResponse = {
       ...data,
       processingTime: `${processingTime}ms`,
       status: data.status || "success",
-      jwtValidationTime: req.jwtValidationTime ? `${req.jwtValidationTime}ms` : "N/A",
-      blockchainValidationTime: req.blockchainValidationTime ? `${req.blockchainValidationTime}ms` : "N/A",
-      gasUsed: req.gasUsed ? req.gasUsed : "N/A",
+      jwtValidationTime: req.jwtValidationTime || "N/A",
+      blockchainValidationTime: req.blockchainValidationTime || "N/A",
+      dbQueryTime: req.dbQueryTime || "N/A",
+      gasUsed: req.gasUsed || "N/A",
     };
-
     return oldJson.call(this, formattedResponse);
   };
   next();
@@ -59,6 +63,7 @@ async function callBlockchain(token) {
     const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
     const isValid = await contract.validateToken(hashedToken);
     const executionTime = Date.now() - start;
+
     return { isValid, executionTime };
   } catch (error) {
     console.error("Blockchain call failed:", error);
@@ -70,10 +75,10 @@ async function registerTokenOnBlockchain(token) {
   try {
     const start = Date.now();
     const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
-    const expiryTime = Math.floor(Date.now() / 1000) + 300;
+    const expiryTime = Math.floor(Date.now() / 1000) + 300; // 5 minutes
 
     const tx = await contract.registerToken(hashedToken, expiryTime);
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(); // Wait for the transaction to be mined
     const gasUsed = receipt.gasUsed.toString();
     const executionTime = Date.now() - start;
 
@@ -90,7 +95,7 @@ async function removeTokenFromBlockchain(token) {
     const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
 
     const tx = await contract.removeToken(hashedToken);
-    const receipt = await tx.wait();
+    const receipt = await tx.wait(); // Wait for the transaction to be mined
     const gasUsed = receipt.gasUsed.toString();
     const executionTime = Date.now() - start;
 
@@ -109,16 +114,25 @@ const authMiddleware = async (req, res, next) => {
       throw new Error("No token provided");
     }
 
-    const jwtStartTime = Date.now();
+    const jwtStart = Date.now();
     const decoded = jwt.verify(token, SECRET);
-    const jwtValidationTime = Date.now() - jwtStartTime;
-
+    req.jwtValidationTime = `${Date.now() - jwtStart}ms`;
     req.user = decoded;
 
-    const blockchainStartTime = Date.now();
-    req.blockchainResult = await callBlockchain(token);
-    req.blockchainValidationTime = Date.now() - blockchainStartTime;
-    req.jwtValidationTime = jwtValidationTime;
+    const dbStart = Date.now();
+    const user = await User.findOne({ username: decoded.username });
+    req.dbQueryTime = `${Date.now() - dbStart}ms`;
+
+    if (!user) {
+      throw new Error("User not found in database");
+    }
+
+    const { isValid, executionTime } = await callBlockchain(token);
+    req.blockchainValidationTime = `${executionTime}ms`;
+
+    if (!isValid) {
+      throw new Error("Blockchain validation failed");
+    }
 
     next();
   } catch (error) {
@@ -129,10 +143,7 @@ const authMiddleware = async (req, res, next) => {
 // Service Layer
 const serviceLayer = async (req, res, next) => {
   try {
-    console.log(
-      "Service Layer: Processing request for user",
-      req.user.username
-    );
+    console.log("Service Layer: Processing request for user", req.user.username);
     req.serviceResult = { message: "Service logic executed successfully" };
     next();
   } catch (error) {
@@ -143,12 +154,6 @@ const serviceLayer = async (req, res, next) => {
 // Post-service middleware
 const postServiceMiddleware = async (req, res, next) => {
   try {
-    const isBlockchainValid = await req.blockchainResult;
-
-    if (!isBlockchainValid) {
-      throw new Error("Blockchain validation failed");
-    }
-
     console.log("Post-Service: Blockchain validated successfully");
     res.json(req.serviceResult);
   } catch (error) {
@@ -170,26 +175,34 @@ app.post("/signup", async (req, res, next) => {
   try {
     const { username, password } = req.body;
 
-    if (users[username]) {
-      return res.status(400).json({
-        message: "User already exists",
-      });
+    const dbStart = Date.now();
+    const existingUser = await User.findOne({ username });
+    req.dbQueryTime = `${Date.now() - dbStart}ms`;
+
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    users[username] = { password: hashedPassword };
+    const newUser = new User({ username, password: hashedPassword });
 
+    const dbSaveStart = Date.now();
+    await newUser.save();
+    req.dbQueryTime = `${Date.now() - dbSaveStart}ms`;
+
+    // Measure JWT signing time
     const jwtStart = Date.now();
     const token = jwt.sign({ username }, SECRET, { expiresIn: "5m" });
-    req.jwtValidationTime = Date.now() - jwtStart;
+    req.jwtValidationTime = `${Date.now() - jwtStart}ms`;
 
+    // Register token on blockchain
     const { expiryTime, gasUsed, executionTime } = await registerTokenOnBlockchain(token);
-    req.blockchainValidationTime = executionTime;
-    req.gasUsed = gasUsed;
+    req.blockchainValidationTime = `${executionTime}ms`;
+    req.gasUsed = gasUsed;  // ✅ Assign gasUsed to req.gasUsed
 
     res.cookie("token", token, { httpOnly: true, maxAge: 300000 });
     res.json({
-      message: "User registered successfully",
+      message: "User registered successfully"
     });
   } catch (error) {
     next(error);
@@ -199,54 +212,51 @@ app.post("/signup", async (req, res, next) => {
 app.post("/login", async (req, res, next) => {
   try {
     const { username, password } = req.body;
-    const user = users[username];
+
+    const dbStart = Date.now();
+    const user = await User.findOne({ username });
+    req.dbQueryTime = `${Date.now() - dbStart}ms`;
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({
-        message: "Invalid credentials",
-      });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // Measure JWT signing time
     const jwtStart = Date.now();
     const token = jwt.sign({ username }, SECRET, { expiresIn: "5m" });
-    req.jwtValidationTime = Date.now() - jwtStart;
+    req.jwtValidationTime = `${Date.now() - jwtStart}ms`;
 
+    // Register token on blockchain
     const { expiryTime, gasUsed, executionTime } = await registerTokenOnBlockchain(token);
-    req.blockchainValidationTime = executionTime;
-    req.gasUsed = gasUsed;
+    req.blockchainValidationTime = `${executionTime}ms`;
+    req.gasUsed = gasUsed;  // ✅ Assign gasUsed to req.gasUsed
 
     res.cookie("token", token, { httpOnly: true, maxAge: 300000 });
     res.json({
-      message: "Login successful",
+      message: "Login successful"
     });
   } catch (error) {
     next(error);
   }
 });
+
 
 app.post("/logout", authMiddleware, async (req, res, next) => {
   try {
     const token = req.cookies?.token;
-
     const { success, gasUsed, executionTime } = await removeTokenFromBlockchain(token);
-    req.blockchainValidationTime = executionTime;
+
+    req.blockchainValidationTime = `${executionTime}ms`;
     req.gasUsed = gasUsed;
 
-    res.clearCookie("token", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-    });
-
-    res.json({
-      message: "Logged out successfully",
-    });
+    res.clearCookie("token", { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "strict" });
+    res.json({ message: "Logged out successfully" });
   } catch (error) {
     next(error);
   }
 });
 
-// Protected routes
+// Protected route
 app.get("/protected", authMiddleware, serviceLayer, postServiceMiddleware);
 
 app.listen(PORT, () => {

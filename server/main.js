@@ -56,6 +56,20 @@ const formatResponse = (req, res, next) => {
 
 app.use(formatResponse);
 
+//Error Middleware
+app.use((err, req, res, next) => {
+  console.error("Error Middleware:", err.message);
+
+  if (err.message === "TOKEN_MISSING") {
+    return res.status(401).json({ status: "error", message: "Token does not exist or expired" });
+  }
+
+  res.status(500).json({
+    status: "error",
+    message: err.message || "Internal server error",
+  });
+});
+
 // Blockchain functions
 async function callBlockchain(token) {
   try {
@@ -106,12 +120,25 @@ async function removeTokenFromBlockchain(token) {
   }
 }
 
+//Validation Middleware
+const validateRequest = (req, res, next) => {
+  const { username, password } = req.body;
+  if (!username || typeof username !== "string" || username.length < 3) {
+    return res.status(400).json({ message: "Invalid username" });
+  }
+  if (!password || typeof password !== "string" || password.length < 4) {
+    return res.status(400).json({ message: "Password must be at least 6 characters long" });
+  }
+  next();
+};
+
+
 // Authentication middleware
 const authMiddleware = async (req, res, next) => {
   try {
     const token = req.cookies?.token;
     if (!token) {
-      throw new Error("No token provided");
+      throw new Error("TOKEN_MISSING");
     }
 
     const jwtStart = Date.now();
@@ -124,14 +151,14 @@ const authMiddleware = async (req, res, next) => {
     req.dbQueryTime = `${Date.now() - dbStart}ms`;
 
     if (!user) {
-      throw new Error("User not found in database");
+      throw new Error("TOKEN_MISSING");
     }
 
     const { isValid, executionTime } = await callBlockchain(token);
     req.blockchainValidationTime = `${executionTime}ms`;
 
     if (!isValid) {
-      throw new Error("Blockchain validation failed");
+      throw new Error("TOKEN_MISSING");
     }
 
     next();
@@ -171,7 +198,7 @@ app.use((err, req, res, next) => {
 });
 
 // Public routes
-app.post("/signup", async (req, res, next) => {
+app.post("/signup", validateRequest, async (req, res, next) => {
   try {
     const { username, password } = req.body;
 

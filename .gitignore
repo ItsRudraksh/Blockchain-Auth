@@ -92,3 +92,4 @@ artifacts
 *.sublime-build
 .qodo
 *.txt
+db

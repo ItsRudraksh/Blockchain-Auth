@@ -23,8 +23,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 // Blockchain setup
 const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-const contractABI =
-  require("./TokenRegistry.json").abi;
+const contractABI = require("./TokenRegistry.json").abi;
 const contractAddress = process.env.CONTRACT_ADDRESS;
 const contract = new ethers.Contract(contractAddress, contractABI, wallet);
 
@@ -36,11 +35,16 @@ const formatResponse = (req, res, next) => {
   const oldJson = res.json;
   res.json = function (data) {
     const processingTime = Date.now() - req.startTime;
+
     const formattedResponse = {
       ...data,
       processingTime: `${processingTime}ms`,
       status: data.status || "success",
+      jwtValidationTime: req.jwtValidationTime ? `${req.jwtValidationTime}ms` : "N/A",
+      blockchainValidationTime: req.blockchainValidationTime ? `${req.blockchainValidationTime}ms` : "N/A",
+      gasUsed: req.gasUsed ? req.gasUsed : "N/A",
     };
+
     return oldJson.call(this, formattedResponse);
   };
   next();
@@ -51,9 +55,11 @@ app.use(formatResponse);
 // Blockchain functions
 async function callBlockchain(token) {
   try {
+    const start = Date.now();
     const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
     const isValid = await contract.validateToken(hashedToken);
-    return isValid;
+    const executionTime = Date.now() - start;
+    return { isValid, executionTime };
   } catch (error) {
     console.error("Blockchain call failed:", error);
     throw new Error("Blockchain validation failed");
@@ -62,13 +68,16 @@ async function callBlockchain(token) {
 
 async function registerTokenOnBlockchain(token) {
   try {
+    const start = Date.now();
     const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
-    const expiryTime = Math.floor(Date.now() / 1000) + 300; // 5 minutes
+    const expiryTime = Math.floor(Date.now() / 1000) + 300;
 
     const tx = await contract.registerToken(hashedToken, expiryTime);
-    await tx.wait(); // Wait for the transaction to be mined
+    const receipt = await tx.wait();
+    const gasUsed = receipt.gasUsed.toString();
+    const executionTime = Date.now() - start;
 
-    return expiryTime;
+    return { expiryTime, gasUsed, executionTime };
   } catch (error) {
     console.error("Error registering token on blockchain:", error);
     throw new Error("Failed to register token");
@@ -77,12 +86,15 @@ async function registerTokenOnBlockchain(token) {
 
 async function removeTokenFromBlockchain(token) {
   try {
+    const start = Date.now();
     const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
 
     const tx = await contract.removeToken(hashedToken);
-    await tx.wait(); // Wait for the transaction to be mined
+    const receipt = await tx.wait();
+    const gasUsed = receipt.gasUsed.toString();
+    const executionTime = Date.now() - start;
 
-    return true;
+    return { success: true, gasUsed, executionTime };
   } catch (error) {
     console.error("Error removing token from blockchain:", error);
     throw new Error("Failed to remove token from blockchain");
@@ -97,9 +109,16 @@ const authMiddleware = async (req, res, next) => {
       throw new Error("No token provided");
     }
 
+    const jwtStartTime = Date.now();
     const decoded = jwt.verify(token, SECRET);
+    const jwtValidationTime = Date.now() - jwtStartTime;
+
     req.user = decoded;
-    req.blockchainResult = callBlockchain(token);
+
+    const blockchainStartTime = Date.now();
+    req.blockchainResult = await callBlockchain(token);
+    req.blockchainValidationTime = Date.now() - blockchainStartTime;
+    req.jwtValidationTime = jwtValidationTime;
 
     next();
   } catch (error) {
@@ -160,8 +179,13 @@ app.post("/signup", async (req, res, next) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     users[username] = { password: hashedPassword };
 
+    const jwtStart = Date.now();
     const token = jwt.sign({ username }, SECRET, { expiresIn: "5m" });
-    await registerTokenOnBlockchain(token);
+    req.jwtValidationTime = Date.now() - jwtStart;
+
+    const { expiryTime, gasUsed, executionTime } = await registerTokenOnBlockchain(token);
+    req.blockchainValidationTime = executionTime;
+    req.gasUsed = gasUsed;
 
     res.cookie("token", token, { httpOnly: true, maxAge: 300000 });
     res.json({
@@ -183,8 +207,13 @@ app.post("/login", async (req, res, next) => {
       });
     }
 
+    const jwtStart = Date.now();
     const token = jwt.sign({ username }, SECRET, { expiresIn: "5m" });
-    await registerTokenOnBlockchain(token);
+    req.jwtValidationTime = Date.now() - jwtStart;
+
+    const { expiryTime, gasUsed, executionTime } = await registerTokenOnBlockchain(token);
+    req.blockchainValidationTime = executionTime;
+    req.gasUsed = gasUsed;
 
     res.cookie("token", token, { httpOnly: true, maxAge: 300000 });
     res.json({
@@ -198,7 +227,10 @@ app.post("/login", async (req, res, next) => {
 app.post("/logout", authMiddleware, async (req, res, next) => {
   try {
     const token = req.cookies?.token;
-    await removeTokenFromBlockchain(token);
+
+    const { success, gasUsed, executionTime } = await removeTokenFromBlockchain(token);
+    req.blockchainValidationTime = executionTime;
+    req.gasUsed = gasUsed;
 
     res.clearCookie("token", {
       httpOnly: true,

@@ -93,3 +93,4 @@ artifacts
 .qodo
 *.txt
 db
+TokenRegistry.json

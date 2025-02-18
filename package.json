@@ -11,7 +11,7 @@
     "web3": "^4.16.0"
   },
   "devDependencies": {
-    "@nomiclabs/hardhat-waffle": "^2.0.6",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "hardhat": "^2.22.17",
     "nodemon": "^3.1.9"
   }

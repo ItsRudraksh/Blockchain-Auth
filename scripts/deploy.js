@@ -1,11 +1,14 @@
 const { ethers } = require("hardhat");
+
 async function main() {
   const TokenRegistry = await ethers.getContractFactory("TokenRegistry");
   const tokenRegistry = await TokenRegistry.deploy();
 
-  await tokenRegistry.deployed();
+  await tokenRegistry.waitForDeployment();
 
-  console.log("TokenRegistry deployed to:", tokenRegistry.address);
+  const contractAddress = await tokenRegistry.getAddress();
+
+  console.log("TokenRegistry deployed to:", contractAddress);
 }
 
 main()

@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { Web3 } = require("web3");
+const { ethers } = require("ethers");
 const cookieParser = require("cookie-parser");
 const dotenv = require("dotenv");
 dotenv.config();
@@ -18,13 +18,15 @@ app.use((req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.SECRET;
+const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
 // Blockchain setup
-const web3 = new Web3("http://127.0.0.1:8545");
+const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
+const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const contractABI =
-  require("../artifacts/contracts/Auth.sol/TokenRegistry.json").abi;
+  require("./TokenRegistry.json").abi;
 const contractAddress = process.env.CONTRACT_ADDRESS;
-const contract = new web3.eth.Contract(contractABI, contractAddress);
+const contract = new ethers.Contract(contractAddress, contractABI, wallet);
 
 // Mock database for user management
 const users = {};
@@ -49,8 +51,8 @@ app.use(formatResponse);
 // Blockchain functions
 async function callBlockchain(token) {
   try {
-    const hashedToken = web3.utils.sha3(token);
-    const isValid = await contract.methods.validateToken(hashedToken).call();
+    const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
+    const isValid = await contract.validateToken(hashedToken);
     return isValid;
   } catch (error) {
     console.error("Blockchain call failed:", error);
@@ -60,13 +62,11 @@ async function callBlockchain(token) {
 
 async function registerTokenOnBlockchain(token) {
   try {
-    const hashedToken = web3.utils.sha3(token);
+    const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
     const expiryTime = Math.floor(Date.now() / 1000) + 300; // 5 minutes
-    const accounts = await web3.eth.getAccounts();
 
-    await contract.methods
-      .registerToken(hashedToken, expiryTime)
-      .send({ from: accounts[0] });
+    const tx = await contract.registerToken(hashedToken, expiryTime);
+    await tx.wait(); // Wait for the transaction to be mined
 
     return expiryTime;
   } catch (error) {
@@ -77,10 +77,10 @@ async function registerTokenOnBlockchain(token) {
 
 async function removeTokenFromBlockchain(token) {
   try {
-    const hashedToken = web3.utils.sha3(token);
-    const accounts = await web3.eth.getAccounts();
+    const hashedToken = ethers.keccak256(ethers.toUtf8Bytes(token));
 
-    await contract.methods.removeToken(hashedToken).send({ from: accounts[0] });
+    const tx = await contract.removeToken(hashedToken);
+    await tx.wait(); // Wait for the transaction to be mined
 
     return true;
   } catch (error) {

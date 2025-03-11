@@ -29,7 +29,17 @@ const SECRET = process.env.SECRET;
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 
 // Blockchain setup
-const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
+const NETWORK = process.env.NETWORK || 'local';
+const getRpcUrl = () => {
+  switch(NETWORK) {
+    case 'sepolia':
+      return process.env.INFURA_SEPOLIA_URL || `https://sepolia.infura.io/v3/${process.env.INFURA_API_KEY}`;
+    default:
+      return "http://127.0.0.1:8545";
+  }
+};
+
+const provider = new ethers.JsonRpcProvider(getRpcUrl());
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 const contractABI = require("./TokenRegistry.json").abi;
 const contractAddress = process.env.CONTRACT_ADDRESS;

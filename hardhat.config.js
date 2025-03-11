@@ -1,4 +1,5 @@
 require("@nomicfoundation/hardhat-toolbox");
+require('dotenv').config();
 
 module.exports = {
   solidity: {
@@ -20,5 +21,11 @@ module.exports = {
         `0xc87509a1c067bbde78beb793e6fa76530b6382a4c0241e5e4a9ec0a0f44dc0d3`,
       ],
     },
+    sepolia: {
+      url: `https://sepolia.infura.io/v3/${process.env.INFURA_API_KEY}`,
+      chainId: 11155111,
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      gasPrice: "auto"
+    }
   },
 };

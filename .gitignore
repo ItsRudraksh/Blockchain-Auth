@@ -95,3 +95,4 @@ artifacts
 db
 TokenRegistry.json
 *.csv
+plot_metrics.py

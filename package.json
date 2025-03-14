@@ -16,5 +16,23 @@
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
     "hardhat": "^2.22.17",
     "nodemon": "^3.1.9"
-  }
+  },
+  "scripts": {
+    "dev": "nodemon server/main.js"
+  },
+  "type": "commonjs",
+  "main": "server/main.js",
+  "name": "blockchain-auth",
+  "version": "1.0.0",
+  "description": "Blockchain-based authentication system",
+  "author": "Rudraksh Kapoor",
+  "license": "MIT",
+  "keywords": [
+    "blockchain",
+    "authentication",
+    "ethereum",
+    "solana",
+    "hyperledger",
+    "besu"
+  ]
 }
